@@ -182,15 +182,21 @@ def run_bot():
         return
     
     try:
-        bot.run(DISCORD_TOKEN)
+        # Use bot.start() for better control in threaded environments
+        # bot.run() is blocking and can be tricky with servers.
+        # We need to manage the asyncio loop ourselves.
+        asyncio.run(bot.start(DISCORD_TOKEN))
     except Exception as e:
         logger.error(f"An error occurred while running the bot: {e}")
 
+# NEW: Start the bot thread as soon as the script is loaded by the server.
+# The `if __name__ == "__main__"` block is only for local testing.
+bot_thread = Thread(target=run_bot)
+bot_thread.daemon = True
+bot_thread.start()
 
 if __name__ == "__main__":
-    bot_thread = Thread(target=run_bot)
-    bot_thread.daemon = True
-    bot_thread.start()
-    
+    # This part now only runs the web server for local testing.
+    # The bot is already started in the thread above.
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
