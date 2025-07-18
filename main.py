@@ -20,9 +20,9 @@ CHANNEL_ID = int(os.environ.get("CHANNEL_ID", 0))
 GAMER_ROLE_ID = int(os.environ.get("GAMER_ROLE_ID", 0))
 
 # --- Bot Settings ---
-AICADE_API_URL = "https://api-stage.braincade.in/backend/v2/community/data?page=1&page_size=24"
+AICADE_API_URL = "https://api-stage.braincade.in/backend/v2/community/data?page=1&page_size=1"
 SEEN_GAMES_FILE = "seen_games.json" 
-CHECK_INTERVAL_MINUTES = 10
+CHECK_INTERVAL_MINUTES = 1
 COMMAND_PREFIX = "!aicade"
 
 # --- Logging Setup ---
