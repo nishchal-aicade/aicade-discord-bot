@@ -1,5 +1,5 @@
 # main.py
-# This version is optimized for hosting on Railway.app
+# This version is optimized for hosting on Render.com
 
 import discord
 from discord.ext import commands, tasks
@@ -12,16 +12,16 @@ from threading import Thread
 import asyncio
 
 # --- Configuration ---
-# This script reads your credentials from Railway's Environment Variables.
+# This script reads your credentials from Render's Environment Variables.
 # DO NOT PASTE YOUR TOKEN OR IDs HERE.
-# You will set these up on the Railway website.
+# You will set these up on the Render website.
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 CHANNEL_ID = int(os.environ.get("CHANNEL_ID", 0))
 GAMER_ROLE_ID = int(os.environ.get("GAMER_ROLE_ID", 0))
 
 # --- Bot Settings ---
 AICADE_API_URL = "https://api-stage.braincade.in/backend/v2/community/data?page=1&page_size=24"
-SEEN_GAMES_FILE = "seen_games.json"
+SEEN_GAMES_FILE = "seen_games.json" 
 CHECK_INTERVAL_MINUTES = 10
 COMMAND_PREFIX = "!aicade"
 
@@ -34,10 +34,12 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
 
-# --- Helper Functions ---
+# --- Helper Functions (No changes needed here) ---
 
 def load_seen_games():
     """Loads the set of seen game URLs from the JSON file."""
+    # On Render, the filesystem is temporary, so this file will reset on deploy.
+    # For persistent storage, a database would be needed, but this works for now.
     if not os.path.exists(SEEN_GAMES_FILE):
         return set()
     try:
@@ -167,24 +169,18 @@ async def manual_check(ctx):
     await ctx.send("`Manual check complete.`")
 
 # --- Web Server and Bot Runner ---
-# This part is structured for platforms like Railway.
-# It starts the Flask web server and the Discord bot in the background.
-
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    # This endpoint lets Railway know the service is healthy.
+    # This endpoint lets Render know the service is healthy.
     return "Bot is running."
 
 def run_bot():
-    # A safety check to ensure all secrets are loaded before running.
     if not DISCORD_TOKEN or not CHANNEL_ID or not GAMER_ROLE_ID:
         logger.error("CRITICAL: Environment variables (secrets) are missing. Bot cannot start.")
         return
     
-    # Use asyncio to run the bot.
-    # This is the standard way to run a discord.py bot.
     try:
         bot.run(DISCORD_TOKEN)
     except Exception as e:
@@ -192,13 +188,9 @@ def run_bot():
 
 
 if __name__ == "__main__":
-    # Start the Discord bot in a separate thread
     bot_thread = Thread(target=run_bot)
     bot_thread.daemon = True
     bot_thread.start()
     
-    # Run the Flask web server in the main thread
-    # Railway will automatically use the PORT environment variable.
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
-
