@@ -1,5 +1,5 @@
 # main.py
-# Final, simplified version for hosting on Render.com as a Background Worker.
+# Final version for hosting on Render.com as a Web Service.
 
 import discord
 from discord.ext import commands, tasks
@@ -8,6 +8,8 @@ import json
 import os
 import logging
 import asyncio
+from flask import Flask
+from threading import Thread
 
 # --- Configuration ---
 # This script reads your credentials from Render's Environment Variables.
@@ -16,15 +18,12 @@ CHANNEL_ID = int(os.environ.get("CHANNEL_ID", 0))
 GAMER_ROLE_ID = int(os.environ.get("GAMER_ROLE_ID", 0))
 
 # --- Bot Settings ---
-# This URL should now only return the single, most recent game.
 AICADE_API_URL = "https://api-stage.braincade.in/backend/v2/community/data?page=1&page_size=1"
-CHECK_INTERVAL_MINUTES = 1 # Set to 1 minute for faster testing
+CHECK_INTERVAL_MINUTES = 10
 COMMAND_PREFIX = "!aicade"
-DUMMY_IMAGE_URL = "https://play.aicade.io/assets/logo-914387a0.png" # Fallback image
+DUMMY_IMAGE_URL = "https://play.aicade.io/assets/logo-914387a0.png"
 
 # --- State Variable ---
-# This variable will hold the URL of the last game we announced.
-# It will persist as long as the bot is running.
 last_announced_game_url = None
 
 # --- Logging Setup ---
@@ -37,7 +36,6 @@ intents.message_content = True
 bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
 
 # --- Helper Function ---
-
 def get_latest_game():
     """Fetches the single latest game from the API."""
     try:
@@ -49,8 +47,7 @@ def get_latest_game():
         return None
 
     if 'data' in api_data and 'data' in api_data['data'] and api_data['data']['data']:
-        game_list = api_data['data']['data']
-        item = game_list[0] # Get the first (and only) game in the list
+        item = api_data['data']['data'][0]
         game_data = item.get('data', {})
         title = game_data.get('game_title')
         publish_id = game_data.get('publish_id')
@@ -64,14 +61,12 @@ def get_latest_game():
     return None
 
 # --- Bot Events and Tasks ---
-
 @bot.event
 async def on_ready():
     """Called when the bot successfully connects to Discord."""
     global last_announced_game_url
     logger.info(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
-    # Announce the very first game it sees when it starts up
-    # to initialize the state.
+    
     latest_game = get_latest_game()
     if latest_game:
         last_announced_game_url = latest_game['url']
@@ -87,14 +82,11 @@ async def check_for_new_games():
     
     latest_game = get_latest_game()
     
-    # If we couldn't fetch a game, or if the latest game is the same as the last one we announced, do nothing.
     if not latest_game or latest_game['url'] == last_announced_game_url:
         logger.info("No new game found.")
         return
 
-    # We found a new game!
     logger.info(f"Found a new game: {latest_game['title']}")
-    
     channel = bot.get_channel(CHANNEL_ID)
     if not channel:
         logger.error(f"Could not find channel with ID {CHANNEL_ID}.")
@@ -124,7 +116,6 @@ async def check_for_new_games():
 
     try:
         await channel.send(embed=embed)
-        # IMPORTANT: Update the state to remember this new game.
         last_announced_game_url = latest_game['url']
     except discord.errors.HTTPException as e:
         logger.error(f"Failed to send game embed for {latest_game['title']}: {e}")
@@ -133,12 +124,29 @@ async def check_for_new_games():
 async def before_check():
     await bot.wait_until_ready()
 
-# --- Bot Runner ---
-if __name__ == "__main__":
+# --- Web Server and Bot Runner ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    # This endpoint is what UptimeRobot will ping.
+    return "Bot is alive and running."
+
+def run_bot():
     if not all([DISCORD_TOKEN, CHANNEL_ID, GAMER_ROLE_ID]):
         logger.error("CRITICAL: One or more environment variables are missing.")
-    else:
-        try:
-            bot.run(DISCORD_TOKEN)
-        except Exception as e:
-            logger.error(f"An error occurred while running the bot: {e}")
+        return
+    try:
+        asyncio.run(bot.start(DISCORD_TOKEN))
+    except Exception as e:
+        logger.error(f"An error occurred while running the bot: {e}")
+
+# Start the bot in a background thread
+bot_thread = Thread(target=run_bot)
+bot_thread.daemon = True
+bot_thread.start()
+
+if __name__ == "__main__":
+    # Run the web server to keep the service alive
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
