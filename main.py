@@ -19,11 +19,13 @@ GAMER_ROLE_ID = int(os.environ.get("GAMER_ROLE_ID", 0))
 
 # --- Bot Settings ---
 AICADE_API_URL = "https://api-stage.braincade.in/backend/v2/community/data?page=1&page_size=1"
-CHECK_INTERVAL_MINUTES = 10
+CHECK_INTERVAL_MINUTES = 1
 COMMAND_PREFIX = "!aicade"
 DUMMY_IMAGE_URL = "https://play.aicade.io/assets/logo-914387a0.png"
 
 # --- State Variable ---
+# This variable will hold the URL of the last game we announced.
+# It starts as None, so the first game the bot sees will always be announced.
 last_announced_game_url = None
 
 # --- Logging Setup ---
@@ -64,14 +66,8 @@ def get_latest_game():
 @bot.event
 async def on_ready():
     """Called when the bot successfully connects to Discord."""
-    global last_announced_game_url
     logger.info(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
-    
-    latest_game = get_latest_game()
-    if latest_game:
-        last_announced_game_url = latest_game['url']
-        logger.info(f"Initial game set to: {latest_game['title']}")
-    
+    # The loop will now handle the first check automatically.
     check_for_new_games.start()
 
 @tasks.loop(minutes=CHECK_INTERVAL_MINUTES)
@@ -82,9 +78,14 @@ async def check_for_new_games():
     
     latest_game = get_latest_game()
     
+    # If we couldn't fetch a game, or if the latest game is the same as the last one we announced, do nothing.
     if not latest_game or latest_game['url'] == last_announced_game_url:
-        logger.info("No new game found.")
-        return
+        if last_announced_game_url is None and latest_game:
+             # This is the very first run. Announce the game and set the state.
+             pass
+        else:
+            logger.info("No new game found.")
+            return
 
     logger.info(f"Found a new game: {latest_game['title']}")
     channel = bot.get_channel(CHANNEL_ID)
@@ -92,13 +93,15 @@ async def check_for_new_games():
         logger.error(f"Could not find channel with ID {CHANNEL_ID}.")
         return
 
-    try:
-        await channel.send(f"<@&{GAMER_ROLE_ID}>")
-    except discord.errors.Forbidden:
-        logger.error(f"Bot lacks permission to send messages in channel {CHANNEL_ID}.")
-        return
-    except discord.errors.HTTPException as e:
-        logger.error(f"Failed to send role mention: {e}")
+    # Only send the ping if it's a genuinely new game, not the very first one on startup.
+    if last_announced_game_url is not None:
+        try:
+            await channel.send(f"<@&{GAMER_ROLE_ID}>")
+        except discord.errors.Forbidden:
+            logger.error(f"Bot lacks permission to send messages in channel {CHANNEL_ID}.")
+            return
+        except discord.errors.HTTPException as e:
+            logger.error(f"Failed to send role mention: {e}")
 
     embed = discord.Embed(
         title=f"🎮 New Game Alert: {latest_game['title']}",
@@ -116,7 +119,9 @@ async def check_for_new_games():
 
     try:
         await channel.send(embed=embed)
+        # IMPORTANT: Update the state to remember this new game.
         last_announced_game_url = latest_game['url']
+        logger.info(f"Successfully announced and updated last game to: {latest_game['title']}")
     except discord.errors.HTTPException as e:
         logger.error(f"Failed to send game embed for {latest_game['title']}: {e}")
 
