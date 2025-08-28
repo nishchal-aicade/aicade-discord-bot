@@ -1,5 +1,6 @@
 # main.py
 # Final version for hosting on Render.com as a Web Service.
+# Modified to prioritize GIFs for cover images.
 
 import discord
 from discord.ext import commands, tasks
@@ -11,33 +12,30 @@ import asyncio
 from flask import Flask
 from threading import Thread
 
-# --- Configuration ---
-# This script reads your credentials from Render's Environment Variables.
+
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 CHANNEL_ID = int(os.environ.get("CHANNEL_ID", 0))
 GAMER_ROLE_ID = int(os.environ.get("GAMER_ROLE_ID", 0))
 
-# --- Bot Settings ---
+
 AICADE_API_URL = "https://api-stage.braincade.in/backend/v2/community/data?page=1&page_size=1"
-CHECK_INTERVAL_MINUTES = 1
+CHECK_INTERVAL_MINUTES = 10
 COMMAND_PREFIX = "!aicade"
 DUMMY_IMAGE_URL = "https://play.aicade.io/assets/logo-914387a0.png"
 
-# --- State Variable ---
-# This variable will hold the URL of the last game we announced.
-# It starts as None, so the first game the bot sees will always be announced.
+
 last_announced_game_url = None
 
-# --- Logging Setup ---
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
 logger = logging.getLogger('discord')
 
-# --- Bot Setup ---
+
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
 
-# --- Helper Function ---
+
 def get_latest_game():
     """Fetches the single latest game from the API."""
     try:
@@ -54,20 +52,32 @@ def get_latest_game():
         title = game_data.get('game_title')
         publish_id = game_data.get('publish_id')
         cover_image_url = game_data.get('cover_image')
-        
+        gif_url = game_data.get('gif_url') # Look for a GIF URL
+
         if title and publish_id:
             full_url = f"https://play.aicade.io/{publish_id}"
-            return {'title': title, 'url': full_url, 'cover_image': cover_image_url}
+            return {
+                'title': title, 
+                'url': full_url, 
+                'cover_image': cover_image_url, 
+                'gif_url': gif_url
+            }
     
     logger.warning("API response format was unexpected or empty.")
     return None
 
-# --- Bot Events and Tasks ---
+
 @bot.event
 async def on_ready():
     """Called when the bot successfully connects to Discord."""
+    global last_announced_game_url
     logger.info(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
-    # The loop will now handle the first check automatically.
+    
+    latest_game = get_latest_game()
+    if latest_game:
+        last_announced_game_url = latest_game['url']
+        logger.info(f"Initial game set to: {latest_game['title']}")
+    
     check_for_new_games.start()
 
 @tasks.loop(minutes=CHECK_INTERVAL_MINUTES)
@@ -78,14 +88,9 @@ async def check_for_new_games():
     
     latest_game = get_latest_game()
     
-    # If we couldn't fetch a game, or if the latest game is the same as the last one we announced, do nothing.
     if not latest_game or latest_game['url'] == last_announced_game_url:
-        if last_announced_game_url is None and latest_game:
-             # This is the very first run. Announce the game and set the state.
-             pass
-        else:
-            logger.info("No new game found.")
-            return
+        logger.info("No new game found.")
+        return
 
     logger.info(f"Found a new game: {latest_game['title']}")
     channel = bot.get_channel(CHANNEL_ID)
@@ -93,15 +98,13 @@ async def check_for_new_games():
         logger.error(f"Could not find channel with ID {CHANNEL_ID}.")
         return
 
-    # Only send the ping if it's a genuinely new game, not the very first one on startup.
-    if last_announced_game_url is not None:
-        try:
-            await channel.send(f"<@&{GAMER_ROLE_ID}>")
-        except discord.errors.Forbidden:
-            logger.error(f"Bot lacks permission to send messages in channel {CHANNEL_ID}.")
-            return
-        except discord.errors.HTTPException as e:
-            logger.error(f"Failed to send role mention: {e}")
+    try:
+        await channel.send(f"<@&{GAMER_ROLE_ID}>")
+    except discord.errors.Forbidden:
+        logger.error(f"Bot lacks permission to send messages in channel {CHANNEL_ID}.")
+        return
+    except discord.errors.HTTPException as e:
+        logger.error(f"Failed to send role mention: {e}")
 
     embed = discord.Embed(
         title=f"🎮 New Game Alert: {latest_game['title']}",
@@ -111,17 +114,28 @@ async def check_for_new_games():
     )
     embed.set_footer(text="Aicade Game Notifier Bot")
     
+    # --- MODIFIED LOGIC TO SUPPORT GIFs ---
+    gif_image = latest_game.get('gif_url')
     cover_image = latest_game.get('cover_image')
-    if cover_image and cover_image != 'null' and not cover_image.startswith('data:image'):
+
+    def is_valid_image_url(url):
+        """Helper to check if a URL is a valid, usable image link."""
+        return url and url != 'null' and not url.startswith('data:image')
+
+    # Prioritize GIF, then fallback to static image, then to a thumbnail
+    if is_valid_image_url(gif_image):
+        embed.set_image(url=gif_image)
+        logger.info(f"Using GIF for embed image: {gif_image}")
+    elif is_valid_image_url(cover_image):
         embed.set_image(url=cover_image)
+        logger.info(f"Using static cover image for embed: {cover_image}")
     else:
         embed.set_thumbnail(url=DUMMY_IMAGE_URL)
+        logger.info("No valid cover image or GIF found, using dummy thumbnail.")
 
     try:
         await channel.send(embed=embed)
-        # IMPORTANT: Update the state to remember this new game.
         last_announced_game_url = latest_game['url']
-        logger.info(f"Successfully announced and updated last game to: {latest_game['title']}")
     except discord.errors.HTTPException as e:
         logger.error(f"Failed to send game embed for {latest_game['title']}: {e}")
 
@@ -129,12 +143,12 @@ async def check_for_new_games():
 async def before_check():
     await bot.wait_until_ready()
 
-# --- Web Server and Bot Runner ---
+
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    # This endpoint is what UptimeRobot will ping.
+    
     return "Bot is alive and running."
 
 def run_bot():
@@ -142,16 +156,18 @@ def run_bot():
         logger.error("CRITICAL: One or more environment variables are missing.")
         return
     try:
-        asyncio.run(bot.start(DISCORD_TOKEN))
+        # Using bot.run() which handles the event loop automatically
+        bot.run(DISCORD_TOKEN)
     except Exception as e:
         logger.error(f"An error occurred while running the bot: {e}")
 
-# Start the bot in a background thread
-bot_thread = Thread(target=run_bot)
-bot_thread.daemon = True
-bot_thread.start()
 
 if __name__ == "__main__":
-    # Run the web server to keep the service alive
+    # Start the bot in a separate thread
+    bot_thread = Thread(target=run_bot)
+    bot_thread.daemon = True
+    bot_thread.start()
+    
+    # Run the Flask app in the main thread
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
