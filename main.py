@@ -82,12 +82,9 @@ async def on_ready():
 
 @tasks.loop(minutes=CHECK_INTERVAL_MINUTES)
 async def check_for_new_games():
-    """The main background task that posts updates."""
     global last_announced_game_url
     logger.info("Running scheduled check for new Aicade games...")
-    
     latest_game = get_latest_game()
-    
     if not latest_game or latest_game['url'] == last_announced_game_url:
         logger.info("No new game found.")
         return
@@ -107,25 +104,39 @@ async def check_for_new_games():
         logger.error(f"Failed to send role mention: {e}")
 
     embed = discord.Embed(
-        title=f"🎮 New Game Alert: {latest_game['title']}",
+        title=f":video_game: New Game Alert: {latest_game['title']}",
         url=latest_game['url'],
-        description=f"A new game, **{latest_game['title']}**, is now available!",
+        description=f"A new game, {latest_game['title']}, is now available!",
         color=discord.Color.blue()
     )
     embed.set_footer(text="Aicade Game Notifier Bot")
-    
-    # --- MODIFIED LOGIC TO SUPPORT GIFs ---
+
     gif_image = latest_game.get('gif_url')
     cover_image = latest_game.get('cover_image')
+    file = None
 
     def is_valid_image_url(url):
-        """Helper to check if a URL is a valid, usable image link."""
         return url and url != 'null' and not url.startswith('data:image')
 
-    # Prioritize GIF, then fallback to static image, then to a thumbnail
     if is_valid_image_url(gif_image):
-        embed.set_image(url=gif_image)
-        logger.info(f"Using GIF for embed image: {gif_image}")
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(gif_image) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        # Check if it's really a GIF
+                        if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+                            file = discord.File(BytesIO(data), filename="cover.gif")
+                            embed.set_image(url="attachment://cover.gif")
+                            logger.info(f"Attached GIF for embed: {gif_image}")
+                        else:
+                            embed.set_image(url=gif_image)
+                    else:
+                        embed.set_thumbnail(url=DUMMY_IMAGE_URL)
+        except Exception as e:
+            logger.error(f"Error fetching GIF image: {e}")
+            embed.set_thumbnail(url=DUMMY_IMAGE_URL)
+
     elif is_valid_image_url(cover_image):
         embed.set_image(url=cover_image)
         logger.info(f"Using static cover image for embed: {cover_image}")
@@ -134,11 +145,14 @@ async def check_for_new_games():
         logger.info("No valid cover image or GIF found, using dummy thumbnail.")
 
     try:
-        await channel.send(embed=embed)
+        if file:
+            await channel.send(embed=embed, file=file)
+        else:
+            await channel.send(embed=embed)
+
         last_announced_game_url = latest_game['url']
     except discord.errors.HTTPException as e:
         logger.error(f"Failed to send game embed for {latest_game['title']}: {e}")
-
 @check_for_new_games.before_loop
 async def before_check():
     await bot.wait_until_ready()
