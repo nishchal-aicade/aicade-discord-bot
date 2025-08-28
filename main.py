@@ -21,7 +21,7 @@ GAMER_ROLE_ID = int(os.environ.get("GAMER_ROLE_ID", 0))
 
 
 AICADE_API_URL = "https://api-stage.braincade.in/backend/v2/community/data?page=1&page_size=1"
-CHECK_INTERVAL_MINUTES = 10
+CHECK_INTERVAL_MINUTES = 1
 COMMAND_PREFIX = "!aicade"
 DUMMY_IMAGE_URL = "https://play.aicade.io/assets/logo-914387a0.png"
 
@@ -187,3 +187,4 @@ if __name__ == "__main__":
     # Run the Flask app in the main thread
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
+
