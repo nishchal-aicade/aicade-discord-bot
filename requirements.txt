@@ -2,3 +2,5 @@ discord.py
 requests
 Flask
 gunicorn
+aiohttp
+
